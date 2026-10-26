@@ -1,0 +1,69 @@
+name: Build plugin
+
+on:
+  push:
+    branches: [ jellyfin-12.3 ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      jellyfin_version:
+        description: 'Jellyfin NuGet version to build against'
+        required: false
+        default: '12.3.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      JELLYFIN_VERSION: ${{ github.event.inputs.jellyfin_version || '12.3.0' }}
+      PROJECT: src/Jellyfin.Plugin.MediaBar/Jellyfin.Plugin.MediaBar.csproj
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build
+        run: dotnet publish "$PROJECT" -c Release -p:JellyfinVersion=$JELLYFIN_VERSION -o out
+
+      - name: Package
+        run: |
+          mkdir -p dist/MediaBar
+          cp out/Jellyfin.Plugin.MediaBar.dll dist/MediaBar/
+          cp src/logo.png dist/MediaBar/ 2>/dev/null || true
+          VERSION=$(sed -n 's#.*<Version>\(.*\)</Version>.*#\1#p' "$PROJECT" | head -1)
+          cat > dist/MediaBar/meta.json <<EOF
+          {
+            "category": "General",
+            "changelog": "Built from ${GITHUB_SHA}",
+            "description": "Featured content slideshow on the home screen (fork built for Jellyfin 12.3)",
+            "guid": "08f615ea-2107-4f04-89cc-091035f54448",
+            "name": "Media Bar",
+            "overview": "Media Bar for Jellyfin $JELLYFIN_VERSION",
+            "owner": "ZoziLaMalice",
+            "targetAbi": "$JELLYFIN_VERSION.0",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "version": "$VERSION",
+            "status": "Active",
+            "autoUpdate": false,
+            "imagePath": "",
+            "assemblies": ["Jellyfin.Plugin.MediaBar.dll"]
+          }
+          EOF
+          cd dist && zip -r "../MediaBar-jf$JELLYFIN_VERSION.zip" MediaBar
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MediaBar-jf${{ env.JELLYFIN_VERSION }}
+          path: MediaBar-jf*.zip
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: MediaBar-jf*.zip
